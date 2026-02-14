@@ -1,0 +1,96 @@
+Title 17 - Commodity and Securities Exchanges
+
+CHAPTER II - SECURITIES AND EXCHANGE COMMISSION
+
+Part 242 - Regulations M, SHO, NMS, AC, and MC and Customer Margin Requirements for Security Futures
+
+Subpart A - Regulation M
+
+§242.100 Preliminary note.
+
+Regulation M is designed to prohibit manipulative activity in connection with securities offerings. This regulation includes the following rules:
+- Rule 101: Activities by distribution participants
+- Rule 102: Activities by issuers and selling security holders  
+- Rule 103: Nasdaq passive market making
+- Rule 104: Stabilizing and other activities in connection with an offering
+
+The rules are designed to prevent artificial stimulation of market activity during the distribution period.
+
+§242.101 Activities by distribution participants.
+
+(a) Scope of section. This section prohibits certain activities by distribution participants during an applicable restricted period in connection with a distribution of securities.
+
+(b) Applicable restricted period. The restricted period begins:
+1. For actively-traded securities (ADTV of at least $1 million and public float of at least $150 million, or securities that are authorized for quotation on Nasdaq and have an ADTV of at least $1 million): One business day before the pricing of the security.
+2. For all other securities: Five business days before the pricing of the security.
+
+(c) Prohibition. Distribution participants are prohibited from bidding for, purchasing, or attempting to induce any person to bid for or purchase, a covered security during the applicable restricted period.
+
+§242.102 Activities by issuers and selling security holders.
+
+(a) General prohibition. An issuer, selling security holder, or any affiliated purchaser of such person may not, directly or indirectly, bid for, purchase, or attempt to induce any person to bid for or purchase, a covered security during the applicable restricted period.
+
+(b) Purpose. This rule is designed to prevent issuers and their affiliated purchasers from artificially supporting the market price of the security during the distribution period.
+
+(c) Exceptions. The following transactions are excepted from this section:
+1. Odd-lot transactions
+2. Exercises of securities in accordance with their terms
+3. Offers and sales by an issuer or selling security holder
+
+Subpart B - Regulation SHO
+
+§242.200 Definition of terms.
+
+For purposes of Regulation SHO, the following terms shall apply:
+
+(a) "Bona fide market making" means legitimate market making activity that is designed to facilitate customer orders.
+
+(b) "Close-out requirement" means the requirement that a participant of a registered clearing agency must, by no later than the beginning of regular trading hours on the settlement day following the settlement date, immediately purchase or borrow securities of like kind and quantity.
+
+(c) "Locate requirement" refers to the requirement that a broker-dealer have reasonable grounds to believe that the security can be borrowed so that it can be delivered on the date delivery is due before effecting a short sale order in any equity security.
+
+(d) "Short sale" means any sale of a security which the seller does not own or any sale which is consummated by the delivery of a security borrowed by, or for the account of, the seller.
+
+§242.203 Locate and delivery requirements.
+
+(a) Locate requirement. A broker-dealer may not accept a short sale order in an equity security from another person, or effect a short sale in an equity security for its own account, unless the broker-dealer has:
+
+1. Borrowed the security, or entered into a bona fide arrangement to borrow the security; or
+2. Has reasonable grounds to believe that the security can be borrowed so that it can be delivered on the date delivery is due; and
+3. Has documented compliance with this paragraph.
+
+(b) Marking requirements. Orders must be marked "long," "short," or "short exempt."
+
+(c) Close-out requirement. If a participant of a registered clearing agency has a fail to deliver position at a registered clearing agency in a threshold security for thirteen consecutive settlement days, the participant shall, by no later than the beginning of regular trading hours on the settlement day following the day that the participant incurred the thirteen consecutive settlement day fail to deliver position, immediately close out the fail to deliver position by purchasing securities of like kind and quantity.
+
+§242.204 Close-out requirement.
+
+(a) Application. This section applies to participants of a registered clearing agency.
+
+(b) Close-out requirement for long and short sales. If a participant has a fail to deliver position at a registered clearing agency in a threshold security for thirteen consecutive settlement days, the participant must:
+1. Immediately purchase securities of like kind and quantity to close out the position
+2. Do so by no later than the beginning of regular trading hours on the settlement day following the thirteenth consecutive settlement day fail
+
+(c) Penalties for failure to close out. A participant that fails to close out a fail to deliver position in accordance with paragraph (b) may not effect further short sales in that security without first borrowing or entering into a bona fide arrangement to borrow the security.
+
+Subpart C - Regulation NMS
+
+§242.600 NMS security designation and definitions.
+
+(a) Designation and characteristics of NMS securities. An "NMS security" means any security or class of securities for which transaction reports are collected, processed, and made available pursuant to an effective transaction reporting plan.
+
+(b) "Automated quotation" means a quotation displayed by a trading center and accessible electronically.
+
+§242.610 Access to quotations.
+
+(a) Reasonable access. A trading center that displays quotations must provide access to those quotations on terms that are not unfairly discriminatory.
+
+(b) Fees. Fees for accessing quotations must be fair and reasonable and not unreasonably discriminatory.
+
+§242.611 Order protection rule.
+
+(a) General rule. A trading center shall establish, maintain, and enforce written policies and procedures that are reasonably designed to prevent trade-throughs on that trading center of protected quotations in NMS stocks.
+
+(b) Trade-through. A trade-through occurs when a trading center executes an order at a price that is inferior to a protected quotation, except as provided in the intermarket sweep order exception.
+
+This regulation ensures that investors receive the best available prices when their orders are executed in the national market system.

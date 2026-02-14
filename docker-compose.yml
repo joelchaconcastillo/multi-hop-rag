@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  multi-hop-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-hop-rag
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4-turbo-preview}
+      - HUGGINGFACE_EMBEDDING_MODEL=${HUGGINGFACE_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - CHROMA_PERSIST_DIRECTORY=/app/chroma_db
+      - CHROMA_COLLECTION_NAME=${CHROMA_COLLECTION_NAME:-multi_hop_rag}
+      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
+      - MAX_HOPS=${MAX_HOPS:-3}
+      - TOP_K_RETRIEVAL=${TOP_K_RETRIEVAL:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Persist ChromaDB data
+      - ./chroma_db:/app/chroma_db
+      # Mount documents directory for indexing
+      - ./documents:/app/documents:ro
+      # Logs
+      - ./logs:/app/logs
+    restart: unless-stopped
+    command: python examples/cli.py stats
+
+  # Optional: Jupyter notebook for interactive development
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-hop-rag-jupyter
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+    volumes:
+      - ./chroma_db:/app/chroma_db
+      - ./documents:/app/documents
+      - ./notebooks:/app/notebooks
+    ports:
+      - "8888:8888"
+    command: >
+      bash -c "pip install jupyter &&
+               jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+    profiles:
+      - dev
