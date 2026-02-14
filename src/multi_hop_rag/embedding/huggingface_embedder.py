@@ -101,7 +101,8 @@ class HuggingFaceEmbedder:
                     f"Embedding attempt {attempt + 1}/{self.max_retries} failed: {str(e)}"
                 )
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (attempt + 1))
+                    # Exponential backoff
+                    time.sleep(self.retry_delay * (2 ** attempt))
                 else:
                     logger.error(f"Failed to generate embeddings after {self.max_retries} attempts")
                     raise

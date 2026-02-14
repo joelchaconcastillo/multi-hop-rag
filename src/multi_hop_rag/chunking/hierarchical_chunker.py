@@ -19,9 +19,9 @@ class DocumentChunk:
     def __post_init__(self):
         """Generate chunk ID if not provided."""
         if self.chunk_id is None:
-            # Create a simple hash-based ID
+            # Create a hash-based ID using SHA-256
             import hashlib
-            content_hash = hashlib.md5(self.content.encode()).hexdigest()[:8]
+            content_hash = hashlib.sha256(self.content.encode()).hexdigest()[:16]
             section = self.metadata.get("section", "unknown")
             self.chunk_id = f"{section}_{content_hash}"
 
