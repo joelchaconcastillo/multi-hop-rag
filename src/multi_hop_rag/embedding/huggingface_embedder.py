@@ -83,7 +83,11 @@ class HuggingFaceEmbedder:
                         text=text,
                         model=self.model_name
                     )
-                    
+
+                    # Normalize possible numpy outputs to lists
+                    if hasattr(embedding, "tolist"):
+                        embedding = embedding.tolist()
+
                     # Handle different response formats
                     if isinstance(embedding, list):
                         # If it's already a list, check if it's a nested list

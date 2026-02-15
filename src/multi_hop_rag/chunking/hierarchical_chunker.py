@@ -21,9 +21,13 @@ class DocumentChunk:
         if self.chunk_id is None:
             # Create a hash-based ID using SHA-256
             import hashlib
-            content_hash = hashlib.sha256(self.content.encode()).hexdigest()[:16]
             section = self.metadata.get("section", "unknown")
-            self.chunk_id = f"{section}_{content_hash}"
+            start_line = self.metadata.get("start_line", 0)
+            chunk_index = self.metadata.get("chunk_index", 0)
+            content_hash = hashlib.sha256(
+                f"{section}|{start_line}|{chunk_index}|{self.content}".encode()
+            ).hexdigest()[:16]
+            self.chunk_id = f"{section}_{start_line}_{chunk_index}_{content_hash}"
 
 
 class HierarchicalChunker:
@@ -87,10 +91,15 @@ class HierarchicalChunker:
         
         # Pattern for CFR-style sections (e.g., §242.100, §1.234)
         cfr_pattern = r'§\s*(\d+)\.(\d+)'
+        # Pattern for NIH-style numbered sections (e.g., 2.3, 2.3.4) with heading
+        numbered_heading_pattern = r'^(\d+(?:\.\d+)+)\s+([^\n]+)'
         # Pattern for numbered sections (e.g., 1.1, 2.3.4)
         numbered_pattern = r'^(\d+(?:\.\d+)*)\s+'
-        # Pattern for titled sections
+        # Pattern for titled sections (CFR + policy docs)
         title_pattern = r'^(Title|Chapter|Part|Subpart|Section)\s+([^\n]+)'
+        # NIH GPS-style part/chapter headings with optional title
+        part_pattern = r'^(Part)\s+([IVXLC0-9]+)(?:\s*[-–:]\s*(.+))?$'
+        chapter_pattern = r'^(Chapter)\s+([IVXLC0-9]+)(?:\s*[-–:]\s*(.+))?$'
         
         current_position = 0
         lines = text.split('\n')
@@ -110,9 +119,12 @@ class HierarchicalChunker:
             # Check for hierarchical markers
             title_match = re.search(title_pattern, line, re.IGNORECASE)
             cfr_match = re.search(cfr_pattern, line)
+            numbered_heading_match = re.search(numbered_heading_pattern, line)
             numbered_match = re.search(numbered_pattern, line)
+            part_match = re.search(part_pattern, line, re.IGNORECASE)
+            chapter_match = re.search(chapter_pattern, line, re.IGNORECASE)
             
-            if title_match or cfr_match or numbered_match:
+            if title_match or cfr_match or numbered_heading_match or numbered_match or part_match or chapter_match:
                 # Save previous section if it has content
                 if current_section["content"].strip():
                     sections.append(current_section.copy())
@@ -120,14 +132,29 @@ class HierarchicalChunker:
                 # Start new section
                 metadata = current_section["metadata"].copy()
                 
-                if title_match:
+                if part_match:
+                    level, value, heading = part_match.groups()
+                    metadata["part"] = value.strip()
+                    metadata["heading"] = heading.strip() if heading else None
+                    metadata["section"] = f"{level}_{value.strip()}"
+                elif chapter_match:
+                    level, value, heading = chapter_match.groups()
+                    metadata["chapter"] = value.strip()
+                    metadata["heading"] = heading.strip() if heading else None
+                    metadata["section"] = f"{level}_{value.strip()}"
+                elif title_match:
                     level, value = title_match.groups()
                     metadata[level.lower()] = value.strip()
+                    metadata["heading"] = value.strip()
                     metadata["section"] = f"{level}_{value.strip()}"
                 elif cfr_match:
                     part, section = cfr_match.groups()
                     metadata["part"] = part
                     metadata["section"] = f"{part}.{section}"
+                elif numbered_heading_match:
+                    section_num, heading = numbered_heading_match.groups()
+                    metadata["section"] = section_num
+                    metadata["heading"] = heading.strip()
                 elif numbered_match:
                     section_num = numbered_match.group(1)
                     metadata["section"] = section_num

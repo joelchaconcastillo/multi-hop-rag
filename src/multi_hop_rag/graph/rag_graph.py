@@ -10,6 +10,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..retrieval import MultiHopRetriever
 from ..config import Settings
+from ..prompts import (
+    DECOMPOSE_SYSTEM_PROMPT,
+    ANSWER_SYSTEM_PROMPT,
+    build_decomposition_prompt,
+    build_answer_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +94,78 @@ class MultiHopRAGGraph:
 
         return workflow.compile()
 
+    def _log_block(self, title: str, lines: List[str]) -> None:
+        """Log a visual block for hop inputs/outputs."""
+        border = "=" * 80
+        block = "\n".join([
+            border,
+            title,
+            "-" * 80,
+            *lines,
+            border,
+        ])
+        logger.info("\n%s", block)
+
+    def _summarize_docs(self, docs: List[Dict[str, Any]], limit: int = 5) -> List[str]:
+        """Summarize retrieved documents for logging."""
+        summary = []
+        for idx, doc in enumerate(docs[:limit], start=1):
+            section = doc.get("metadata", {}).get("section", "N/A")
+            distance = doc.get("distance", "N/A")
+            snippet = doc.get("content", "").replace("\n", " ")
+            snippet = (snippet[:120] + "...") if len(snippet) > 120 else snippet
+            summary.append(
+                f"{idx}. section={section} distance={distance} snippet={snippet}"
+            )
+        if not summary:
+            summary.append("(no documents retrieved)")
+        return summary
+
+    def _is_complex_question(self, question: str) -> bool:
+        """Heuristic check for whether a question is complex."""
+        lowered = question.lower()
+        keyword_hits = any(
+            token in lowered
+            for token in (" and ", " or ", "compare", "relationship", "how", "why", "impact")
+        )
+        word_count = len(question.split())
+        return keyword_hits or word_count >= 12
+
+    def _collect_section_refs(
+        self,
+        docs: List[Dict[str, Any]],
+        limit: int = 6,
+    ) -> List[str]:
+        """Collect unique section references from retrieved docs."""
+        sections: List[str] = []
+        for doc in docs:
+            section = doc.get("metadata", {}).get("section")
+            if section and section not in sections:
+                sections.append(str(section))
+            if len(sections) >= limit:
+                break
+        return sections
+
+    def _build_stage_query(
+        self,
+        question: str,
+        focus: str,
+        subquery: Optional[str] = None,
+        docs: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """Build a stage query that keeps subqueries but follows the 3-step strategy."""
+        sections_text = "N/A"
+        if docs:
+            sections = self._collect_section_refs(docs)
+            sections_text = ", ".join(sections) if sections else "N/A"
+        subquery_text = subquery or question
+        return (
+            f"{question}\n"
+            f"Focus: {focus}\n"
+            f"Guiding sub-query: {subquery_text}\n"
+            f"Relevant sections: {sections_text}"
+        )
+
     def _decompose_query(self, state: RAGState) -> RAGState:
         """
         Decompose the user query into sub-queries for multi-hop retrieval.
@@ -102,16 +180,10 @@ class MultiHopRAGGraph:
         
         question = state["question"]
         
-        prompt = f"""Given the following question, break it down into 1-3 sub-queries that can help answer it through multi-hop retrieval.
-Each sub-query should focus on a specific aspect or piece of information needed.
-
-Question: {question}
-
-Provide the sub-queries as a numbered list, one per line.
-"""
+        prompt = build_decomposition_prompt(question)
 
         messages = [
-            SystemMessage(content="You are a helpful assistant that decomposes complex questions into simpler sub-queries."),
+            SystemMessage(content=DECOMPOSE_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ]
         
@@ -133,6 +205,13 @@ Provide the sub-queries as a numbered list, one per line.
             queries = [question]
         
         logger.info(f"Decomposed into {len(queries)} sub-queries")
+        self._log_block(
+            "DECOMPOSITION",
+            [
+                f"Question: {question}",
+                f"Sub-queries: {queries}",
+            ],
+        )
         
         return {
             **state,
@@ -153,9 +232,18 @@ Provide the sub-queries as a numbered list, one per line.
         """
         logger.info("Performing hop 1 retrieval")
         
-        # Use the first sub-query or the original question
-        query = state["decomposed_queries"][0] if state["decomposed_queries"] else state["question"]
-        
+        subquery = state["decomposed_queries"][0] if state["decomposed_queries"] else None
+        query = self._build_stage_query(
+            question=state["question"],
+            focus="Identify relevant sections",
+            subquery=subquery,
+        )
+        self._log_block(
+            "HOP 1 INPUT",
+            [
+                f"Query: {query}",
+            ],
+        )
         # Retrieve documents
         query_embedding = self.retriever.embedder.embed_query(query)
         results = self.retriever.chroma_store.query(
@@ -174,6 +262,10 @@ Provide the sub-queries as a numbered list, one per line.
             })
         
         logger.info(f"Hop 1: Retrieved {len(hop_1_docs)} documents")
+        self._log_block(
+            "HOP 1 OUTPUT",
+            [f"Documents: {len(hop_1_docs)}"] + self._summarize_docs(hop_1_docs),
+        )
         
         return {
             **state,
@@ -205,14 +297,19 @@ Provide the sub-queries as a numbered list, one per line.
                 "current_hop": 3,
             }
         
-        # Use the second sub-query if available, otherwise generate from hop 1 context
-        if len(state["decomposed_queries"]) > 1:
-            query = state["decomposed_queries"][1]
-        else:
-            # Generate expansion query from hop 1 documents
-            context = "\n".join([doc["content"][:200] for doc in hop_1_docs[:2]])
-            query = f"Information related to: {context}"
-        
+        subquery = state["decomposed_queries"][1] if len(state["decomposed_queries"]) > 1 else None
+        query = self._build_stage_query(
+            question=state["question"],
+            focus="Find specific requirements or rules referenced by these sections",
+            subquery=subquery,
+            docs=hop_1_docs,
+        )
+        self._log_block(
+            "HOP 2 INPUT",
+            [
+                f"Query: {query}",
+            ],
+        )
         # Retrieve documents
         query_embedding = self.retriever.embedder.embed_query(query)
         results = self.retriever.chroma_store.query(
@@ -234,6 +331,10 @@ Provide the sub-queries as a numbered list, one per line.
                 })
         
         logger.info(f"Hop 2: Retrieved {len(hop_2_docs)} new documents")
+        self._log_block(
+            "HOP 2 OUTPUT",
+            [f"Documents: {len(hop_2_docs)}"] + self._summarize_docs(hop_2_docs),
+        )
         
         return {
             **state,
@@ -264,15 +365,22 @@ Provide the sub-queries as a numbered list, one per line.
                 "hop_3_results": [],
             }
         
-        # Use the third sub-query if available, otherwise generate from previous hops
-        if len(state["decomposed_queries"]) > 2:
-            query = state["decomposed_queries"][2]
-        else:
-            # Generate expansion query from hop 2 or hop 1 documents
-            recent_docs = hop_2_docs if hop_2_docs else hop_1_docs
-            context = "\n".join([doc["content"][:200] for doc in recent_docs[:2]])
-            query = f"Additional information about: {context}"
+        recent_docs = hop_2_docs if hop_2_docs else hop_1_docs
+        subquery = state["decomposed_queries"][2] if len(state["decomposed_queries"]) > 2 else None
+        query = self._build_stage_query(
+            question=state["question"],
+            focus="Expand related requirements, exceptions, definitions",
+            subquery=subquery,
+            docs=recent_docs,
+        )
         
+        self._log_block(
+            "HOP 3 INPUT",
+            [
+                f"Query: {query}",
+            ],
+        )
+
         # Retrieve documents
         query_embedding = self.retriever.embedder.embed_query(query)
         results = self.retriever.chroma_store.query(
@@ -294,6 +402,10 @@ Provide the sub-queries as a numbered list, one per line.
                 })
         
         logger.info(f"Hop 3: Retrieved {len(hop_3_docs)} new documents")
+        self._log_block(
+            "HOP 3 OUTPUT",
+            [f"Documents: {len(hop_3_docs)}"] + self._summarize_docs(hop_3_docs),
+        )
         
         return {
             **state,
@@ -324,20 +436,10 @@ Provide the sub-queries as a numbered list, one per line.
         
         context = "\n".join(context_parts)
         
-        prompt = f"""Based on the following retrieved documents, answer the question comprehensively.
-If the documents don't contain enough information to answer the question, say so.
-
-Question: {question}
-
-Retrieved Documents:
-{context}
-
-Provide a detailed answer based on the information in the documents. 
-Reference specific sections or documents when relevant.
-"""
+        prompt = build_answer_prompt(question, context)
 
         messages = [
-            SystemMessage(content="You are a helpful assistant that answers questions based on provided documents. Always cite your sources."),
+            SystemMessage(content=ANSWER_SYSTEM_PROMPT),
             HumanMessage(content=prompt)
         ]
         
