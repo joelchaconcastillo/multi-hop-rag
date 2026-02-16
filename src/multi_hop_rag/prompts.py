@@ -11,6 +11,11 @@ ANSWER_SYSTEM_PROMPT = (
     "Always cite your sources."
 )
 
+SYNTHESIZE_SYSTEM_PROMPT = (
+    "You are a helpful assistant that synthesizes key terms, definitions, "
+    "requirements, and exceptions from retrieved documents."
+)
+
 
 def build_decomposition_prompt(question: str) -> str:
     """Build the prompt for query decomposition."""
@@ -33,4 +38,17 @@ def build_answer_prompt(question: str, context: str) -> str:
         f"{context}\n\n"
         "Provide a detailed answer based on the information in the documents.\n"
         "Reference specific sections or documents when relevant.\n"
+    )
+
+
+def build_synthesis_prompt(question: str, context: str) -> str:
+    """Build the prompt for hop 3 synthesis."""
+    return (
+        "Synthesize the most important terms, definitions, and requirements from the "
+        "retrieved documents. Focus on what is essential for answering the question. "
+        "Use short bullet points when possible.\n\n"
+        f"Question: {question}\n\n"
+        "Retrieved Documents:\n"
+        f"{context}\n\n"
+        "Provide a concise synthesis.\n"
     )

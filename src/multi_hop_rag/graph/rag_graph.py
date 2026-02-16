@@ -12,8 +12,10 @@ from ..retrieval import MultiHopRetriever
 from ..config import Settings
 from ..prompts import (
     DECOMPOSE_SYSTEM_PROMPT,
+    SYNTHESIZE_SYSTEM_PROMPT,
     ANSWER_SYSTEM_PROMPT,
     build_decomposition_prompt,
+    build_synthesis_prompt,
     build_answer_prompt,
 )
 
@@ -39,6 +41,9 @@ class RAGState(TypedDict):
     
     # Final answer
     answer: str
+
+    # Synthesis
+    synthesis: str
     
     # Metadata
     current_hop: int
@@ -81,15 +86,15 @@ class MultiHopRAGGraph:
         workflow.add_node("decompose_query", self._decompose_query)
         workflow.add_node("retrieve_hop_1", self._retrieve_hop_1)
         workflow.add_node("retrieve_hop_2", self._retrieve_hop_2)
-        workflow.add_node("retrieve_hop_3", self._retrieve_hop_3)
+        workflow.add_node("synthesize_hop_3", self._synthesize_hop_3)
         workflow.add_node("generate_answer", self._generate_answer)
 
         # Add edges
         workflow.set_entry_point("decompose_query")
         workflow.add_edge("decompose_query", "retrieve_hop_1")
         workflow.add_edge("retrieve_hop_1", "retrieve_hop_2")
-        workflow.add_edge("retrieve_hop_2", "retrieve_hop_3")
-        workflow.add_edge("retrieve_hop_3", "generate_answer")
+        workflow.add_edge("retrieve_hop_2", "synthesize_hop_3")
+        workflow.add_edge("synthesize_hop_3", "generate_answer")
         workflow.add_edge("generate_answer", END)
 
         return workflow.compile()
@@ -112,10 +117,11 @@ class MultiHopRAGGraph:
         for idx, doc in enumerate(docs[:limit], start=1):
             section = doc.get("metadata", {}).get("section", "N/A")
             distance = doc.get("distance", "N/A")
+            score = doc.get("score", "N/A")
             snippet = doc.get("content", "").replace("\n", " ")
             snippet = (snippet[:120] + "...") if len(snippet) > 120 else snippet
             summary.append(
-                f"{idx}. section={section} distance={distance} snippet={snippet}"
+                f"{idx}. section={section} distance={distance} score={score} snippet={snippet}"
             )
         if not summary:
             summary.append("(no documents retrieved)")
@@ -245,21 +251,10 @@ class MultiHopRAGGraph:
             ],
         )
         # Retrieve documents
-        query_embedding = self.retriever.embedder.embed_query(query)
-        results = self.retriever.chroma_store.query(
-            query_embedding=query_embedding,
+        hop_1_docs = self.retriever.search(
+            query=query,
             n_results=self.settings.top_k_retrieval,
         )
-        
-        # Format results
-        hop_1_docs = []
-        for i in range(len(results["ids"])):
-            hop_1_docs.append({
-                "id": results["ids"][i],
-                "content": results["documents"][i],
-                "metadata": results["metadatas"][i],
-                "distance": results["distances"][i],
-            })
         
         logger.info(f"Hop 1: Retrieved {len(hop_1_docs)} documents")
         self._log_block(
@@ -300,7 +295,7 @@ class MultiHopRAGGraph:
         subquery = state["decomposed_queries"][1] if len(state["decomposed_queries"]) > 1 else None
         query = self._build_stage_query(
             question=state["question"],
-            focus="Find specific requirements or rules referenced by these sections",
+            focus="Expand terms, definitions, and referenced requirements",
             subquery=subquery,
             docs=hop_1_docs,
         )
@@ -311,24 +306,14 @@ class MultiHopRAGGraph:
             ],
         )
         # Retrieve documents
-        query_embedding = self.retriever.embedder.embed_query(query)
-        results = self.retriever.chroma_store.query(
-            query_embedding=query_embedding,
+        hop_2_docs = self.retriever.search(
+            query=query,
             n_results=self.settings.top_k_retrieval,
         )
-        
-        # Format and filter out duplicates
+
+        # Filter out duplicates
         hop_1_ids = {doc["id"] for doc in hop_1_docs}
-        hop_2_docs = []
-        for i in range(len(results["ids"])):
-            doc_id = results["ids"][i]
-            if doc_id not in hop_1_ids:
-                hop_2_docs.append({
-                    "id": doc_id,
-                    "content": results["documents"][i],
-                    "metadata": results["metadatas"][i],
-                    "distance": results["distances"][i],
-                })
+        hop_2_docs = [doc for doc in hop_2_docs if doc["id"] not in hop_1_ids]
         
         logger.info(f"Hop 2: Retrieved {len(hop_2_docs)} new documents")
         self._log_block(
@@ -343,74 +328,56 @@ class MultiHopRAGGraph:
             "current_hop": 3,
         }
 
-    def _retrieve_hop_3(self, state: RAGState) -> RAGState:
+    def _synthesize_hop_3(self, state: RAGState) -> RAGState:
         """
-        Perform third hop retrieval based on previous hops.
+        Synthesize findings from previous hops.
 
         Args:
             state: Current graph state
 
         Returns:
-            Updated state with hop 3 results
+            Updated state with synthesis output
         """
-        logger.info("Performing hop 3 retrieval")
-        
-        hop_1_docs = state["hop_1_results"]
-        hop_2_docs = state["hop_2_results"]
-        
-        if not hop_1_docs and not hop_2_docs:
-            logger.warning("No previous results to expand from")
+        logger.info("Synthesizing hop 3 context")
+
+        all_docs = state["all_documents"]
+
+        if not all_docs:
+            logger.warning("No documents available for synthesis")
             return {
                 **state,
                 "hop_3_results": [],
+                "synthesis": "",
             }
-        
-        recent_docs = hop_2_docs if hop_2_docs else hop_1_docs
-        subquery = state["decomposed_queries"][2] if len(state["decomposed_queries"]) > 2 else None
-        query = self._build_stage_query(
-            question=state["question"],
-            focus="Expand related requirements, exceptions, definitions",
-            subquery=subquery,
-            docs=recent_docs,
-        )
-        
+
+        ranked_docs = sorted(all_docs, key=lambda doc: doc.get("score", 0.0), reverse=True)
+        context_parts = []
+        for idx, doc in enumerate(ranked_docs[:8], start=1):
+            section = doc.get("metadata", {}).get("section", "N/A")
+            context_parts.append(
+                f"[Document {idx}] (Section: {section})\n{doc.get('content', '')}\n"
+            )
+
+        context = "\n".join(context_parts)
+        prompt = build_synthesis_prompt(state["question"], context)
+
+        messages = [
+            SystemMessage(content=SYNTHESIZE_SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ]
+
+        response = self.llm.invoke(messages)
+        synthesis = response.content
+
         self._log_block(
-            "HOP 3 INPUT",
-            [
-                f"Query: {query}",
-            ],
+            "HOP 3 SYNTHESIS",
+            [synthesis[:500] + ("..." if len(synthesis) > 500 else "")],
         )
 
-        # Retrieve documents
-        query_embedding = self.retriever.embedder.embed_query(query)
-        results = self.retriever.chroma_store.query(
-            query_embedding=query_embedding,
-            n_results=self.settings.top_k_retrieval,
-        )
-        
-        # Format and filter out duplicates
-        existing_ids = {doc["id"] for doc in state["all_documents"]}
-        hop_3_docs = []
-        for i in range(len(results["ids"])):
-            doc_id = results["ids"][i]
-            if doc_id not in existing_ids:
-                hop_3_docs.append({
-                    "id": doc_id,
-                    "content": results["documents"][i],
-                    "metadata": results["metadatas"][i],
-                    "distance": results["distances"][i],
-                })
-        
-        logger.info(f"Hop 3: Retrieved {len(hop_3_docs)} new documents")
-        self._log_block(
-            "HOP 3 OUTPUT",
-            [f"Documents: {len(hop_3_docs)}"] + self._summarize_docs(hop_3_docs),
-        )
-        
         return {
             **state,
-            "hop_3_results": hop_3_docs,
-            "all_documents": state["all_documents"] + hop_3_docs,
+            "hop_3_results": [],
+            "synthesis": synthesis,
         }
 
     def _generate_answer(self, state: RAGState) -> RAGState:
@@ -427,10 +394,15 @@ class MultiHopRAGGraph:
         
         question = state["question"]
         all_docs = state["all_documents"]
+        synthesis = state.get("synthesis", "")
         
         # Prepare context from all retrieved documents
+        ranked_docs = sorted(all_docs, key=lambda doc: doc.get("score", 0.0), reverse=True)
         context_parts = []
-        for i, doc in enumerate(all_docs[:10]):  # Limit to top 10 documents
+        if synthesis:
+            context_parts.append(f"[SYNTHESIS]\n{synthesis}\n")
+
+        for i, doc in enumerate(ranked_docs[:10]):  # Limit to top 10 documents
             section = doc["metadata"].get("section", "N/A")
             context_parts.append(f"[Document {i+1}] (Section: {section})\n{doc['content']}\n")
         
@@ -475,6 +447,7 @@ class MultiHopRAGGraph:
             "hop_3_results": [],
             "all_documents": [],
             "answer": "",
+            "synthesis": "",
             "current_hop": 0,
             "total_documents_retrieved": 0,
         }
@@ -488,6 +461,7 @@ class MultiHopRAGGraph:
             "answer": final_state["answer"],
             "decomposed_queries": final_state["decomposed_queries"],
             "total_documents_retrieved": final_state["total_documents_retrieved"],
+            "synthesis": final_state.get("synthesis", ""),
             "documents_by_hop": {
                 "hop_1": len(final_state["hop_1_results"]),
                 "hop_2": len(final_state["hop_2_results"]),

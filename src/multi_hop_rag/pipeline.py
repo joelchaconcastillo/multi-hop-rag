@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from .config import Settings
+from .categorization import CategoryScorer, DEFAULT_CATEGORIES
 from .chunking import HierarchicalChunker, DocumentChunk
 from .embedding import HuggingFaceEmbedder
 from .indexing import ChromaStore
@@ -36,6 +37,11 @@ class MultiHopRAGPipeline:
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
         )
+
+        self.categorizer = CategoryScorer(
+            categories=DEFAULT_CATEGORIES,
+            smoothing=settings.category_smoothing,
+        )
         
         self.embedder = HuggingFaceEmbedder(
             api_key=settings.huggingface_api_key,
@@ -52,6 +58,9 @@ class MultiHopRAGPipeline:
             embedder=self.embedder,
             top_k=settings.top_k_retrieval,
             max_hops=settings.max_hops,
+            categorizer=self.categorizer,
+            similarity_weight=settings.rerank_similarity_weight,
+            rerank_fetch_multiplier=settings.rerank_fetch_multiplier,
         )
         
         self.rag_graph = MultiHopRAGGraph(
@@ -80,6 +89,12 @@ class MultiHopRAGPipeline:
         
         # Chunk the document
         chunks = self.chunker.chunk_document(document_path, metadata)
+
+        # Attach category weights to chunk metadata
+        for chunk in chunks:
+            weights = self.categorizer.score_text(chunk.content)
+            chunk.metadata["category_weights"] = self.categorizer.serialize_weights(weights)
+            chunk.metadata["category_labels"] = ",".join(self.categorizer.top_labels(weights))
         
         # Generate embeddings
         texts = [chunk.content for chunk in chunks]
@@ -136,6 +151,12 @@ class MultiHopRAGPipeline:
         
         # Chunk the text
         chunks = self.chunker.chunk_text(text, metadata)
+
+        # Attach category weights to chunk metadata
+        for chunk in chunks:
+            weights = self.categorizer.score_text(chunk.content)
+            chunk.metadata["category_weights"] = self.categorizer.serialize_weights(weights)
+            chunk.metadata["category_labels"] = ",".join(self.categorizer.top_labels(weights))
         
         # Generate embeddings
         texts = [chunk.content for chunk in chunks]

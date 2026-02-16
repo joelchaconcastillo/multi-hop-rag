@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     max_hops: int = 3
     top_k_retrieval: int = 5
 
+    # Categorization and reranking
+    rerank_similarity_weight: float = 0.7
+    rerank_fetch_multiplier: int = 3
+    category_smoothing: float = 0.05
+
     # Logging
     log_level: str = "INFO"
 

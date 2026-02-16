@@ -5,6 +5,7 @@ __version__ = "0.1.0"
 from .config import Settings
 from .pipeline import MultiHopRAGPipeline, setup_logging
 from .chunking import HierarchicalChunker, DocumentChunk
+from .categorization import CategoryScorer, DEFAULT_CATEGORIES
 from .embedding import HuggingFaceEmbedder
 from .indexing import ChromaStore
 from .retrieval import MultiHopRetriever
@@ -16,6 +17,8 @@ __all__ = [
     "setup_logging",
     "HierarchicalChunker",
     "DocumentChunk",
+    "CategoryScorer",
+    "DEFAULT_CATEGORIES",
     "HuggingFaceEmbedder",
     "ChromaStore",
     "MultiHopRetriever",

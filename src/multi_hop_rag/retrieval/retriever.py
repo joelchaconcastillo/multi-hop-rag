@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from ..indexing import ChromaStore
 from ..embedding import HuggingFaceEmbedder
+from ..categorization import CategoryScorer, DEFAULT_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class RetrievalResult:
     metadata: Dict[str, Any]
     distance: float
     hop: int
+    score: float
 
 
 class MultiHopRetriever:
@@ -29,6 +31,9 @@ class MultiHopRetriever:
         embedder: HuggingFaceEmbedder,
         top_k: int = 5,
         max_hops: int = 3,
+        categorizer: Optional[CategoryScorer] = None,
+        similarity_weight: float = 0.7,
+        rerank_fetch_multiplier: int = 3,
     ):
         """
         Initialize multi-hop retriever.
@@ -43,6 +48,27 @@ class MultiHopRetriever:
         self.embedder = embedder
         self.top_k = top_k
         self.max_hops = max_hops
+        self.categorizer = categorizer or CategoryScorer(DEFAULT_CATEGORIES)
+        self.similarity_weight = similarity_weight
+        self.rerank_fetch_multiplier = max(1, rerank_fetch_multiplier)
+
+    def search(
+        self,
+        query: str,
+        n_results: int = 5,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search with category-aware reranking."""
+        fetch_k = max(n_results, n_results * self.rerank_fetch_multiplier)
+
+        query_embedding = self.embedder.embed_query(query)
+        raw_results = self.chroma_store.query(
+            query_embedding=query_embedding,
+            n_results=fetch_k,
+            where=metadata_filter,
+        )
+
+        return self._rerank_results(query, raw_results, n_results)
 
     def retrieve(
         self,
@@ -69,28 +95,27 @@ class MultiHopRetriever:
 
         # First hop: query-based retrieval
         logger.info(f"Starting {num_hops}-hop retrieval for query: {query}")
-        query_embedding = self.embedder.embed_query(query)
-        
-        hop_results = self.chroma_store.query(
-            query_embedding=query_embedding,
+        hop_results = self.search(
+            query=query,
             n_results=self.top_k,
-            where=initial_metadata_filter,
+            metadata_filter=initial_metadata_filter,
         )
 
-        # Process first hop results
-        for i, doc_id in enumerate(hop_results["ids"]):
+        for doc in hop_results:
+            doc_id = doc["id"]
             if doc_id not in seen_ids:
                 seen_ids.add(doc_id)
                 all_results.append(
                     RetrievalResult(
-                        document=hop_results["documents"][i],
-                        metadata=hop_results["metadatas"][i],
-                        distance=hop_results["distances"][i],
+                        document=doc["content"],
+                        metadata=doc["metadata"],
+                        distance=doc["distance"],
                         hop=1,
+                        score=doc["score"],
                     )
                 )
 
-        logger.info(f"Hop 1: Retrieved {len(hop_results['ids'])} documents")
+        logger.info(f"Hop 1: Retrieved {len(hop_results)} documents")
 
         # Subsequent hops: expand search based on retrieved documents
         for hop_num in range(2, num_hops + 1):
@@ -110,24 +135,23 @@ class MultiHopRetriever:
 
             hop_results_ids = set()
             for expansion_query in expansion_queries:
-                expansion_embedding = self.embedder.embed_query(expansion_query)
-                
-                expanded_results = self.chroma_store.query(
-                    query_embedding=expansion_embedding,
+                expanded_results = self.search(
+                    query=expansion_query,
                     n_results=self.top_k,
                 )
 
-                # Add new results
-                for i, doc_id in enumerate(expanded_results["ids"]):
+                for doc in expanded_results:
+                    doc_id = doc["id"]
                     if doc_id not in seen_ids and doc_id not in hop_results_ids:
                         seen_ids.add(doc_id)
                         hop_results_ids.add(doc_id)
                         all_results.append(
                             RetrievalResult(
-                                document=expanded_results["documents"][i],
-                                metadata=expanded_results["metadatas"][i],
-                                distance=expanded_results["distances"][i],
+                                document=doc["content"],
+                                metadata=doc["metadata"],
+                                distance=doc["distance"],
                                 hop=hop_num,
+                                score=doc["score"],
                             )
                         )
 
@@ -135,6 +159,55 @@ class MultiHopRetriever:
 
         logger.info(f"Total retrieved: {len(all_results)} documents across {num_hops} hops")
         return all_results
+
+    def _rerank_results(
+        self,
+        query: str,
+        results: Dict[str, Any],
+        n_results: int,
+    ) -> List[Dict[str, Any]]:
+        query_weights = self.categorizer.score_text(query)
+        scored: List[Dict[str, Any]] = []
+
+        for i in range(len(results["ids"])):
+            metadata = results["metadatas"][i]
+            content = results["documents"][i]
+            distance = results["distances"][i]
+
+            doc_weights = self.categorizer.parse_weights(metadata.get("category_weights"))
+            if not doc_weights:
+                doc_weights = self.categorizer.score_text(content)
+
+            category_score = self._dot_score(query_weights, doc_weights)
+            similarity = 1.0 / (1.0 + float(distance))
+            combined = (self.similarity_weight * similarity) + (
+                (1.0 - self.similarity_weight) * category_score
+            )
+
+            scored.append({
+                "id": results["ids"][i],
+                "content": content,
+                "metadata": metadata,
+                "distance": distance,
+                "similarity": similarity,
+                "category_score": category_score,
+                "score": combined,
+            })
+
+        scored.sort(key=lambda item: item["score"], reverse=True)
+        return scored[:n_results]
+
+    def _dot_score(
+        self,
+        query_weights: Dict[str, float],
+        doc_weights: Dict[str, float],
+    ) -> float:
+        if not query_weights or not doc_weights:
+            return 0.0
+        score = 0.0
+        for category, query_weight in query_weights.items():
+            score += query_weight * doc_weights.get(category, 0.0)
+        return score
 
     def _generate_expansion_queries(self, documents: List[RetrievalResult]) -> List[str]:
         """
@@ -205,6 +278,7 @@ class MultiHopRetriever:
                 "document": result.document,
                 "metadata": result.metadata,
                 "distance": result.distance,
+                "score": result.score,
             })
 
         return organized
